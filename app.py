@@ -27,17 +27,14 @@ def analyze_sentiment_free(news_list):
 # --- 3. タブ構成 ---
 tab1, tab2, tab3 = st.tabs(["🔍 財務診断 & お宝スキャナー", "📊 過去検証", "💰 ポートフォリオ"])
 
-# --- 4. タブ1: スキャナー & 切り替え式ヒートマップ ---
+# --- 4. タブ1: スキャナー & ヒートマップ ---
 with tab1:
     st.sidebar.title("🛠️ 分析設定")
-    
-    # ヒートマップの表示切り替えスイッチ
     map_color = st.sidebar.radio("ヒートマップの色分け", ["値動き（騰落率）", "健全性（安全スコア）"])
-    
     mode = st.sidebar.radio("スキャン戦略", ["勢い重視（順張り）", "底値狙い（逆張り）"])
     
     st.sidebar.subheader("🏥 財務フィルター (NISA向)")
-    min_safety = st.sidebar.slider("最小安全スコア", 0, 100, 0) # 0にしておけば制限なし
+    min_safety = st.sidebar.slider("最小安全スコア", 0, 100, 0)
     min_dividend = st.sidebar.slider("最小配当利回り(%)", 0.0, 7.0, 0.0)
 
     try:
@@ -47,119 +44,132 @@ with tab1:
         target_stocks = []
 
     if st.button('全銘柄スキャン開始！'):
-        with st.spinner('テクニカル ＆ 財務データを解析中...'):
-            all_data = []
-            progress_bar = st.progress(0)
-            for i, ticker in enumerate(target_stocks):
-                try:
-                    stock = yf.Ticker(ticker)
-                    info = stock.info
-                    df = stock.history(period="60d")
-                    if len(df) < 30: continue
-
-                    # テクニカル
-                    curr_price = df['Close'].iloc[-1]
-                    change_pct = ((curr_price - df['Close'].iloc[-2]) / df['Close'].iloc[-2]) * 100
-                    vol_ratio = df['Volume'].iloc[-1] / df['Volume'].iloc[-6:-1].mean()
-                    ma5 = df['Close'].rolling(window=5).mean()
-                    ma25 = df['Close'].rolling(window=25).mean()
-                    is_gc = (ma5.iloc[-2] <= ma25.iloc[-2]) and (ma5.iloc[-1] > ma25.iloc[-1])
-                    kairi = ((curr_price - ma25.iloc[-1])/ma25.iloc[-1]*100)
-                    
-                    delta = df['Close'].diff()
-                    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-                    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-                    rsi = 100 - (100 / (1 + (gain / loss).iloc[-1]))
-
-                    # 財務
-                    per = info.get('trailingPE', 0)
-                    pbr = info.get('priceToBook', 0)
-                    div_yield = info.get('dividendYield', 0) * 100
+        if not target_stocks:
+            st.warning("銘柄リストが空です。")
+        else:
+            with st.spinner('テクニカル ＆ 財務データを解析中...'):
+                all_data = []
+                progress_bar = st.progress(0)
+                for i, ticker in enumerate(target_stocks):
                     try:
-                        balance = stock.balance_sheet
-                        equity_ratio = (balance.loc['Stockholders Equity'].iloc[0] / balance.loc['Total Assets'].iloc[0]) * 100
-                    except:
-                        equity_ratio = 0 
+                        stock = yf.Ticker(ticker)
+                        info = stock.info
+                        df = stock.history(period="60d")
+                        if len(df) < 30: continue
 
-                    # 安全スコア
-                    safety_score = 0
-                    if 0 < per < 15: safety_score += 25
-                    if 0 < pbr < 1.2: safety_score += 25
-                    if equity_ratio > 40: safety_score += 25
-                    if div_yield > 3: safety_score += 25
-                    
-                    all_data.append({
-                        "コード": ticker, "企業名": info.get('shortName', ticker), "業種": info.get('sector', '未分類'),
-                        "価格": round(curr_price, 1), "騰落率(%)": round(change_pct, 2), "出来高(倍)": round(vol_ratio, 2),
-                        "配当(%)": round(div_yield, 2), "安全スコア": safety_score, "RSI": round(rsi, 1), 
-                        "25日乖離": round(kairi, 2), "GC": "★" if is_gc else "", "PER": per, "PBR": pbr, "自己資本比率(%)": equity_ratio,
-                        "ニュース": stock.news, "概要": info.get('longBusinessSummary', '')[:200]
-                    })
-                except: continue
-                finally: progress_bar.progress((i + 1) / len(target_stocks))
+                        curr_price = df['Close'].iloc[-1]
+                        change_pct = ((curr_price - df['Close'].iloc[-2]) / df['Close'].iloc[-2]) * 100
+                        vol_ratio = df['Volume'].iloc[-1] / df['Volume'].iloc[-6:-1].mean()
+                        ma25 = df['Close'].rolling(window=25).mean()
+                        kairi = ((curr_price - ma25.iloc[-1])/ma25.iloc[-1]*100)
+                        
+                        delta = df['Close'].diff()
+                        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+                        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+                        rsi = 100 - (100 / (1 + (gain / loss).iloc[-1]))
 
-            df_res = pd.DataFrame(all_data)
+                        # 財務
+                        per = info.get('trailingPE', 0)
+                        pbr = info.get('priceToBook', 0)
+                        div_yield = info.get('dividendYield', 0) * 100
+                        try:
+                            balance = stock.balance_sheet
+                            equity_ratio = (balance.loc['Stockholders Equity'].iloc[0] / balance.loc['Total Assets'].iloc[0]) * 100
+                        except:
+                            equity_ratio = 0 
 
-            # --- 切り替え式ヒートマップ ---
-            if map_color == "値動き（騰落率）":
-                st.subheader("🌡️ 市場ヒートマップ（赤：上昇 / 緑：下落）")
-                fig_hp = px.treemap(df_res, path=['業種', '企業名'], values=np.abs(df_res['騰落率(%)'])+1,
-                                   color='騰落率(%)', color_continuous_scale='RdYlGn_r', hover_data=['価格', '騰落率(%)'])
-            else:
-                st.subheader("🏥 財務健全性ヒートマップ（濃い緑ほど安全）")
-                fig_hp = px.treemap(df_res, path=['業種', '企業名'], values=np.abs(df_res['騰落率(%)'])+1,
-                                   color='安全スコア', color_continuous_scale='Greens', hover_data=['価格', '安全スコア'])
-            st.plotly_chart(fig_hp, use_container_width=True)
+                        safety_score = 0
+                        if 0 < per < 15: safety_score += 25
+                        if 0 < pbr < 1.2: safety_score += 25
+                        if equity_ratio > 40: safety_score += 25
+                        if div_yield > 3: safety_score += 25
+                        
+                        all_data.append({
+                            "コード": ticker, "企業名": info.get('shortName', ticker), "業種": info.get('sector', '未分類'),
+                            "価格": round(curr_price, 1), "騰落率(%)": round(change_pct, 2), "出来高(倍)": round(vol_ratio, 2),
+                            "配当(%)": round(div_yield, 2), "安全スコア": safety_score, "RSI": round(rsi, 1), 
+                            "25日乖離": round(kairi, 2), "PER": per, "PBR": pbr, "自己資本比率(%)": equity_ratio,
+                            "ニュース": stock.news, "概要": info.get('longBusinessSummary', '')[:200]
+                        })
+                    except: continue
+                    finally: progress_bar.progress((i + 1) / len(target_stocks))
 
-            # --- フィルタリング ---
-            if mode == "勢い重視（順張り）":
-                results = df_res[(df_res['騰落率(%)'] >= 3.0) & (df_res['出来高(倍)'] >= 1.5) & (df_res['安全スコア'] >= min_safety) & (df_res['配当(%)'] >= min_dividend)]
-            else:
-                results = df_res[(df_res['RSI'] <= 30) & (df_res['安全スコア'] >= min_safety) & (df_res['配当(%)'] >= min_dividend)]
+                if all_data:
+                    df_res = pd.DataFrame(all_data)
 
-            if not results.empty:
-                st.success(f"{len(results)} 件の銘柄が合致！")
-                sectors = sorted(results['業種'].unique())
-                for s in sectors:
-                    s_df = results[results['業種'] == s]
-                    with st.expander(f"📁 {s} ({len(s_df)}銘柄)"):
-                        st.dataframe(s_df.drop(columns=["概要", "ニュース", "業種"]).sort_values(by="騰落率(%)", ascending=False))
-                        for _, row in s_df.iterrows():
-                            st.write(f"--- **{row['企業名']} ({row['コード']})** ---")
-                            c1, c2 = st.columns(2)
-                            with c1: st.write(f"**財務:** PER:{round(row['PER'],1)} / PBR:{round(row['PBR'],2)} / 安全スコア:{row['安全スコア']}点")
-                            with c2: st.info(analyze_sentiment_free(row['ニュース']))
-            else:
-                st.warning("条件に合う銘柄は見つかりませんでした。")
+                    # --- ヒートマップ (安全ガード付き) ---
+                    if "騰落率(%)" in df_res.columns:
+                        if map_color == "値動き（騰落率）":
+                            st.subheader("🌡️ 市場ヒートマップ（騰落率）")
+                            fig_hp = px.treemap(df_res, path=['業種', '企業名'], values=np.abs(df_res['騰落率(%)'])+1,
+                                               color='騰落率(%)', color_continuous_scale='RdYlGn_r', hover_data=['価格', '騰落率(%)'])
+                        else:
+                            st.subheader("🏥 財務健全性ヒートマップ（安全スコア）")
+                            fig_hp = px.treemap(df_res, path=['業種', '企業名'], values=np.abs(df_res['騰落率(%)'])+1,
+                                               color='安全スコア', color_continuous_scale='Greens', hover_data=['価格', '安全スコア'])
+                        st.plotly_chart(fig_hp, use_container_width=True)
 
-# --- 5. タブ2 & 3 (省略せず以前のバックテスト・ポートフォリオを維持) ---
+                        # --- スキャナー結果の表示 ---
+                        if mode == "勢い重視（順張り）":
+                            results = df_res[(df_res['騰落率(%)'] >= 3.0) & (df_res['出来高(倍)'] >= 1.5) & (df_res['安全スコア'] >= min_safety) & (df_res['配当(%)'] >= min_dividend)]
+                        else:
+                            results = df_res[(df_res['RSI'] <= 30) & (df_res['安全スコア'] >= min_safety) & (df_res['配当(%)'] >= min_dividend)]
+
+                        if not results.empty:
+                            st.success(f"{len(results)} 件の銘柄が合致！")
+                            sectors = sorted(results['業種'].unique())
+                            for s in sectors:
+                                s_df = results[results['業種'] == s]
+                                with st.expander(f"📁 {s} ({len(s_df)}銘柄)"):
+                                    st.dataframe(s_df.drop(columns=["概要", "ニュース", "業種"]))
+                                    for _, row in s_df.iterrows():
+                                        st.write(f"--- **{row['企業名']} ({row['コード']})** ---")
+                                        c1, c2 = st.columns(2)
+                                        with c1: st.write(f"**財務概要:** PER:{round(row['PER'],1)} / PBR:{round(row['PBR'],2)} / 自己資本:{round(row['自己資本比率(%)'],1)}%")
+                                        with c2: st.info(analyze_sentiment_free(row['ニュース']))
+                        else:
+                            st.warning("条件に合う銘柄は見つかりませんでした。")
+                else:
+                    st.error("データを一件も取得できませんでした。tickers.txt の形式を確認してください。")
+
+# --- タブ2: バックテスト ---
 with tab2:
-    st.title("📊 バックテスト（過去検証）")
+    st.title("📊 バックテスト")
     sel_ticker = st.text_input("検証したい銘柄", value="6758.T")
     if st.button('勝率を検証！'):
-        df_bt = yf.Ticker(sel_ticker).history(period="2y")
-        if len(df_bt) > 50:
-            df_bt['MA5'] = df_bt['Close'].rolling(window=5).mean(); df_bt['MA25'] = df_bt['Close'].rolling(window=25).mean()
-            df_bt['GC'] = (df_bt['MA5'] > df_bt['MA25']) & (df_bt['MA5'].shift(1) <= df_bt['MA25'].shift(1))
-            sigs = df_bt[df_bt['GC'] == True]; rets = []
-            for d in sigs.index:
-                idx = df_bt.index.get_loc(d)
-                if idx + 3 < len(df_bt): rets.append(((df_bt['Close'].iloc[idx+3] - df_bt['Close'].iloc[idx])/df_bt['Close'].iloc[idx])*100)
-            if rets:
-                st.metric("3日後勝率", f"{len([r for r in rets if r > 0])/len(rets)*100:.1f}%", f"平均利益 {sum(rets)/len(rets):.2f}%")
-            fig_bt = go.Figure(data=[go.Candlestick(x=df_bt.index, open=df_bt['Open'], high=df_bt['High'], low=df_bt['Low'], close=df_bt['Close'])])
-            fig_bt.add_trace(go.Scatter(x=sigs.index, y=sigs['Low']*0.97, mode='markers', marker=dict(symbol='star', size=12, color='gold')))
-            st.plotly_chart(fig_bt, use_container_width=True)
+        try:
+            df_bt = yf.Ticker(sel_ticker).history(period="2y")
+            if not df_bt.empty:
+                df_bt['MA5'] = df_bt['Close'].rolling(window=5).mean()
+                df_bt['MA25'] = df_bt['Close'].rolling(window=25).mean()
+                df_bt['GC'] = (df_bt['MA5'] > df_bt['MA25']) & (df_bt['MA5'].shift(1) <= df_bt['MA25'].shift(1))
+                sigs = df_bt[df_bt['GC'] == True]
+                rets = []
+                for d in sigs.index:
+                    idx = df_bt.index.get_loc(d)
+                    if idx + 3 < len(df_bt): rets.append(((df_bt['Close'].iloc[idx+3] - df_bt['Close'].iloc[idx])/df_bt['Close'].iloc[idx])*100)
+                if rets:
+                    st.metric("3日後勝率", f"{len([r for r in rets if r > 0])/len(rets)*100:.1f}%", f"平均利益 {sum(rets)/len(rets):.2f}%")
+                fig_bt = go.Figure(data=[go.Candlestick(x=df_bt.index, open=df_bt['Open'], high=df_bt['High'], low=df_bt['Low'], close=df_bt['Close'])])
+                st.plotly_chart(fig_bt, use_container_width=True)
+        except: st.error("検証に失敗しました。")
 
+# --- タブ3: ポートフォリオ ---
 with tab3:
-    st.title("💰 ポートフォリオ管理")
-    pt_input = st.text_area("入力: コード,単価,株数", "7203.T,2500,100")
+    st.title("💰 ポートフォリオ")
+    pt_input = st.text_area("形式: コード,単価,株数", "7203.T,2500,100")
     if st.button('更新'):
         pf_data = []
         for line in pt_input.split('\n'):
             if ',' in line:
-                c, p, n = line.split(','); pf_data.append({"コード": c.strip(), "現在": yf.Ticker(c.strip()).history(period="1d")['Close'].iloc[-1], "取得": float(p), "株数": int(n)})
-        pf_df = pd.DataFrame(pf_data)
-        pf_df['損益'] = (pf_df['現在'] - pf_df['取得']) * pf_df['株数']
-        st.metric("総損益", f"{pf_df['損益'].sum():,.0f}円")
-        st.dataframe(pf_df.style.background_gradient(subset=['損益'], cmap='RdYlGn'))
+                try:
+                    c, p, n = line.split(',')
+                    c = c.strip()
+                    curr = yf.Ticker(c).history(period="1d")['Close'].iloc[-1]
+                    pf_data.append({"コード": c, "現在": curr, "取得": float(p), "株数": int(n)})
+                except: continue
+        if pf_data:
+            pf_df = pd.DataFrame(pf_data)
+            pf_df['損益'] = (pf_df['現在'] - pf_df['取得']) * pf_df['株数']
+            st.metric("総損益", f"{pf_df['損益'].sum():,.0f}円")
+            st.dataframe(pf_df)
