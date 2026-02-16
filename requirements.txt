@@ -3,4 +3,5 @@ yfinance
 pandas
 matplotlib
 lxml
-requests
+numpy
+plotly
