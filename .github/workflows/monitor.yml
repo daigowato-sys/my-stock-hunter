@@ -22,6 +22,7 @@ jobs:
           pip install yfinance pandas requests lxml
       - name: Run Scan
         env:
+          # 名前を Python 側と一致させる
           LINE_ACCESS_TOKEN: ${{ secrets.LINE_ACCESS_TOKEN }}
           LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
         run: python auto_monitor.py
