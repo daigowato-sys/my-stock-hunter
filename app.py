@@ -3,7 +3,7 @@ import yfinance as yf
 import pandas as pd
 
 # ページの設定
-st.set_page_config(page_title="NISA・プロ仕様スキャナー", layout="wide")
+st.set_page_config(page_title="NISA対応・お宝スキャナー", layout="wide")
 
 # サイドバー：分析モードの選択
 st.sidebar.title("🔍 分析モード選択")
@@ -40,12 +40,16 @@ if st.button('スキャン開始！'):
             for i, ticker in enumerate(target_stocks):
                 try:
                     stock = yf.Ticker(ticker)
-                    # 企業情報の取得
+                    # 企業情報と配当利回りの取得
                     info = stock.info
                     company_name = info.get('shortName') or info.get('longName') or ticker
                     summary = info.get('longBusinessSummary', '特徴データなし')[:300] + "..."
+                    
+                    # 配当利回りの取得 (0.025 のような形式で来るので100倍して%にする)
+                    div_yield = info.get('dividendYield')
+                    div_yield_pct = round(div_yield * 100, 2) if div_yield else 0.0
 
-                    # 株価データの取得（直近60日分）
+                    # 株価データの取得
                     df = stock.history(period="60d")
                     if len(df) < 30: continue
 
@@ -53,11 +57,9 @@ if st.button('スキャン開始！'):
                     change_pct = ((curr_price - df['Close'].iloc[-2]) / df['Close'].iloc[-2]) * 100
                     vol_ratio = df['Volume'].iloc[-1] / df['Volume'].iloc[-6:-1].mean()
                     
-                    # 指標計算（乖離率・RSI・GC）
-                    ma5 = df['Close'].rolling(window=5).mean()
+                    # 指標計算
                     ma25 = df['Close'].rolling(window=25).mean()
                     kairi = ((curr_price - ma25.iloc[-1]) / ma25.iloc[-1]) * 100
-                    is_gc = (ma5.iloc[-2] <= ma25.iloc[-2]) and (ma5.iloc[-1] > ma25.iloc[-1])
                     
                     # RSI計算
                     delta = df['Close'].diff()
@@ -71,9 +73,9 @@ if st.button('スキャン開始！'):
                         "価格": round(curr_price, 1),
                         "騰落率(%)": round(change_pct, 2),
                         "出来高(倍)": round(vol_ratio, 2),
+                        "配当利回り(%)": div_yield_pct, # 👈 新しく追加
                         "RSI": round(rsi, 1),
                         "25日乖離": round(kairi, 2),
-                        "GC": "★" if is_gc else "",
                         "概要": summary
                     })
                 except:
@@ -84,7 +86,6 @@ if st.button('スキャン開始！'):
             if all_data:
                 df_res = pd.DataFrame(all_data)
                 
-                # モードによる絞り込み
                 if mode == "勢い重視（順張り）":
                     results = df_res[(df_res['騰落率(%)'] >= min_change) & (df_res['出来高(倍)'] >= min_vol)]
                     sort_col = "騰落率(%)"
@@ -95,15 +96,17 @@ if st.button('スキャン開始！'):
                 if not results.empty:
                     st.success(f"{len(results)} 件の銘柄が見つかりました！")
                     
-                    # 表の表示（概要は除いてスッキリさせる）
+                    # 表示（色付け：配当利回りにも色を付けると見やすい）
                     display_df = results.drop(columns=["概要"])
-                    st.dataframe(display_df.sort_values(by=sort_col, ascending=(mode == "底値狙い（逆張り）")).style.background_gradient(axis=0, cmap='RdYlGn_r'))
+                    st.dataframe(
+                        display_df.sort_values(by=sort_col, ascending=(mode == "底値狙い（逆張り）"))
+                        .style.background_gradient(subset=['騰落率(%)', '配当利回り(%)'], cmap='RdYlGn')
+                    )
 
-                    # 詳細情報の表示
                     st.subheader("📋 企業の詳細と特徴")
                     for _, row in results.iterrows():
-                        with st.expander(f"{row['コード']} {row['企業名']}"):
+                        with st.expander(f"{row['コード']} {row['企業名']} (配当: {row['配当利回り(%)']}%)"):
+                            st.write(f"**配当利回り:** {row['配当利回り(%)']}%")
                             st.write(f"**事業内容:**\n{row['概要']}")
-                            st.write(f"**現在の状態:** RSI={row['RSI']} / 25日乖離={row['25日乖離']}%")
                 else:
                     st.warning("条件に合う銘柄は見つかりませんでした。")
