@@ -1,0 +1,27 @@
+name: Stock Auto Monitor
+
+on:
+  schedule:
+    # 1. 朝の通知（日本時間 08:45 = UTC 23:45）
+    - cron: "45 23 * * 0-4"
+    # 2. 夕方の通知（日本時間 15:45 = UTC 06:45）
+    - cron: "45 6 * * 1-5"
+  workflow_dispatch: # ボタンでいつでも手動実行できる設定
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          pip install yfinance pandas requests lxml
+      - name: Run Scan
+        env:
+          LINE_ACCESS_TOKEN: ${{ secrets.LINE_ACCESS_TOKEN }}
+          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+        run: python auto_monitor.py
