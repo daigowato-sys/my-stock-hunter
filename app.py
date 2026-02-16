@@ -2,16 +2,51 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
-import time
 
-# ページの設定
-st.set_page_config(page_title="最強・株分析システム", layout="wide")
+# --- ページ設定 ---
+st.set_page_config(page_title="完全無料・株分析システム", layout="wide")
 
-# タブの作成
-tab1, tab2 = st.tabs(["🔍 リアルタイム・スキャナー", "📊 過去検証（バックテスト）"])
+# --- 無料版：簡易感情分析エンジン ---
+def analyze_sentiment_free(news_list):
+    if not news_list:
+        return "ニュースなし", "中立"
+    
+    # 判定用キーワード
+    pos_words = ["増益", "上方修正", "最高益", "提携", "買収", "拡大", "好調", "反発", "割安", "買い推奨", "追い風"]
+    neg_words = ["減益", "下方修正", "赤字", "不祥事", "懸念", "失速", "続落", "売り", "向かい風", "訴訟", "慎重"]
+    
+    score = 0
+    detected_pos = []
+    detected_neg = []
+    
+    # ニュースタイトルのスキャン
+    titles = [n['title'] for n in news_list[:5]]
+    for title in titles:
+        for w in pos_words:
+            if w in title:
+                score += 1
+                detected_pos.append(w)
+        for w in neg_words:
+            if w in title:
+                score -= 1
+                detected_neg.append(w)
+    
+    # 判定とサマリーの作成
+    if score > 0:
+        judgment = "【判定：ポジティブ 📈】"
+        reason = f"ポジティブなキーワード（{', '.join(list(set(detected_pos)))}）が検出されました。市場の期待が高まっている可能性があります。"
+    elif score < 0:
+        judgment = "【判定：ネガティブ 📉】"
+        reason = f"ネガティブなキーワード（{', '.join(list(set(detected_neg)))}）が検出されました。警戒が必要です。"
+    else:
+        judgment = "【判定：中立 😐】"
+        reason = "目立った材料は見当たりません。テクニカル指標を優先して判断してください。"
+    
+    summary = f"{judgment}\n\n{reason}\n\n（直近5件のニュースより判定）"
+    return summary
 
-# --- 共通サイドバー設定 ---
-st.sidebar.title("🛠️ 設定")
+# --- サイドバー設定 ---
+st.sidebar.title("🛠️ 分析モード")
 mode = st.sidebar.radio("戦略を選んでください", ["勢い重視（順張り）", "底値狙い（逆張り）"])
 
 if mode == "勢い重視（順張り）":
@@ -23,7 +58,10 @@ else:
     max_rsi = st.sidebar.slider("RSIの上限", 10, 50, 30)
     min_kairi = st.sidebar.slider("25日乖離率(%)", -20, 0, -5)
 
-# --- タブ1: リアルタイム・スキャナー (全機能入り) ---
+# --- タブ構成 ---
+tab1, tab2 = st.tabs(["🔍 リアルタイム・スキャナー", "📊 過去検証（バックテスト）"])
+
+# --- タブ1: スキャナー ---
 with tab1:
     st.title(f"💎 お宝銘柄発見スキャナー - {mode}")
 
@@ -38,7 +76,7 @@ with tab1:
         if not target_stocks:
             st.warning("銘柄リストが空です。")
         else:
-            with st.spinner(f'{len(target_stocks)} 銘柄を分析中...'):
+            with st.spinner(f'{len(target_stocks)} 銘柄をスキャン中...'):
                 all_data = []
                 progress_bar = st.progress(0)
                 
@@ -47,7 +85,7 @@ with tab1:
                         stock = yf.Ticker(ticker)
                         info = stock.info
                         company_name = info.get('shortName') or info.get('longName') or ticker
-                        summary = info.get('longBusinessSummary', '特徴データなし')[:300] + "..."
+                        summary = info.get('longBusinessSummary', '特徴データなし')[:200] + "..."
                         div_yield = info.get('dividendYield', 0)
                         div_yield_pct = round(div_yield * 100, 2) if div_yield else 0.0
 
@@ -72,7 +110,7 @@ with tab1:
                             "コード": ticker, "企業名": company_name, "価格": round(curr_price, 1),
                             "騰落率(%)": round(change_pct, 2), "出来高(倍)": round(vol_ratio, 2),
                             "配当(%)": div_yield_pct, "RSI": round(rsi, 1), "25日乖離": round(kairi, 2),
-                            "GC": "★" if is_gc else "", "概要": summary
+                            "GC": "★" if is_gc else "", "概要": summary, "ニュース": stock.news
                         })
                     except: continue
                     finally: progress_bar.progress((i + 1) / len(target_stocks))
@@ -88,35 +126,39 @@ with tab1:
 
                     if not results.empty:
                         st.success(f"{len(results)} 件の銘柄が見つかりました！")
-                        display_df = results.drop(columns=["概要"])
+                        display_df = results.drop(columns=["概要", "ニュース"])
                         st.dataframe(display_df.sort_values(by=["GC", sort_col], ascending=[False, (mode == "底値狙い（逆張り）")]).style.background_gradient(subset=['騰落率(%)', '配当(%)'], cmap='RdYlGn'))
                         
-                        st.subheader("📋 企業の詳細と特徴")
+                        st.subheader("📋 銘柄詳細分析（無料版ニュース診断）")
                         for _, row in results.iterrows():
                             with st.expander(f"{row['コード']} {row['企業名']} {'★GC発生中' if row['GC']=='★' else ''}"):
-                                st.write(f"**事業内容:**\n{row['概要']}")
+                                col_a, col_b = st.columns([1, 1])
+                                with col_a:
+                                    st.write("**【企業概要】**")
+                                    st.write(row['概要'])
+                                with col_b:
+                                    st.write("**【簡易ニュース診断】**")
+                                    analysis = analyze_sentiment_free(row['ニュース'])
+                                    st.info(analysis)
                     else:
                         st.warning("条件に合う銘柄はありませんでした。")
 
-# --- タブ2: バックテスト詳細分析 ---
+# --- タブ2: バックテスト ---
 with tab2:
     st.title("📊 「あの時買えばよかった」を検証する")
-    selected_ticker = st.text_input("検証したい銘柄コードを入力（例: 7203.T, 6758.T, NVDA）", value="6703.T")
+    selected_ticker = st.text_input("検証したい銘柄コードを入力", value="6758.T")
     
     if st.button('過去1年の勝率を検証！'):
         with st.spinner('データを解析中...'):
             stock = yf.Ticker(selected_ticker)
-            df = stock.history(period="2y") # 余裕を持って2年分取得
-            
+            df = stock.history(period="2y")
             if len(df) < 50:
                 st.error("データが不足しています。")
             else:
-                # 指標計算
                 df['MA5'] = df['Close'].rolling(window=5).mean()
                 df['MA25'] = df['Close'].rolling(window=25).mean()
                 df['GC_Signal'] = (df['MA5'] > df['MA25']) & (df['MA5'].shift(1) <= df['MA25'].shift(1))
                 
-                # 勝率計算
                 signals = df[df['GC_Signal'] == True].copy()
                 results = []
                 for i in range(len(signals)):
@@ -127,7 +169,6 @@ with tab2:
                         sell_price = df['Close'].iloc[idx + 3]
                         results.append(((sell_price - buy_price) / buy_price) * 100)
                 
-                # 統計表示
                 col1, col2, col3 = st.columns(3)
                 if results:
                     win_rate = len([r for r in results if r > 0]) / len(results) * 100
@@ -135,15 +176,12 @@ with tab2:
                     col2.metric("★発生回数", f"{len(results)}回")
                     col3.metric("3日後の勝率", f"{win_rate:.1f}%", f"{sum(results)/len(results):.2f}% (平均利益)")
                 
-                # グラフ作成
                 fig = go.Figure()
                 fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='株価'))
                 fig.add_trace(go.Scatter(x=df.index, y=df['MA5'], line=dict(color='orange', width=1), name='5日線'))
                 fig.add_trace(go.Scatter(x=df.index, y=df['MA25'], line=dict(color='blue', width=1), name='25日線'))
                 
-                # ★印のプロット
                 sig_df = df[df['GC_Signal'] == True]
                 fig.add_trace(go.Scatter(x=sig_df.index, y=sig_df['Low'] * 0.97, mode='markers', marker=dict(symbol='star', size=12, color='gold'), name='GCサイン(★)'))
-                
                 fig.update_layout(title=f"{selected_ticker} のサイン検証チャート", xaxis_rangeslider_visible=False, height=600)
                 st.plotly_chart(fig, use_container_width=True)
