@@ -8,12 +8,12 @@ import numpy as np
 # --- 1. ページ基本設定 ---
 st.set_page_config(page_title="極・投資AI司令室", layout="wide")
 
-# --- 2. ニュース感情分析エンジン (無料版) ---
+# --- 2. ニュース感情分析エンジン ---
 def analyze_sentiment_free(news_list):
     if not news_list or not isinstance(news_list, list):
         return "【判定：中立 😐】"
-    pos_words = ["増益", "上方修正", "最高益", "提携", "買収", "拡大", "好調", "反発", "期待", "上昇", "黒字"]
-    neg_words = ["減益", "下方修正", "赤字", "不祥事", "懸念", "失速", "続落", "売り", "下落", "リスク"]
+    pos_words = ["増益", "上方修正", "最高益", "提携", "買収", "拡大", "好調", "反発", "期待", "上昇"]
+    neg_words = ["減益", "下方修正", "赤字", "不祥事", "懸念", "失速", "続落", "売り", "下落"]
     score = 0
     titles = [n.get('title', '') for n in news_list[:5] if isinstance(n, dict)]
     for title in titles:
@@ -25,16 +25,20 @@ def analyze_sentiment_free(news_list):
     return "【判定：ポジティブ 📈】" if score > 0 else "【判定：ネガティブ 📉】" if score < 0 else "【判定：中立 😐】"
 
 # --- 3. タブ構成 ---
-tab1, tab2, tab3 = st.tabs(["🔍 財務診断スキャナー & ヒートマップ", "📊 過去検証（バックテスト）", "💰 持ち株ポートフォリオ"])
+tab1, tab2, tab3 = st.tabs(["🔍 財務診断 & お宝スキャナー", "📊 過去検証", "💰 ポートフォリオ"])
 
-# --- 4. タブ1: スキャナー & 健康診断 ---
+# --- 4. タブ1: スキャナー & 切り替え式ヒートマップ ---
 with tab1:
     st.sidebar.title("🛠️ 分析設定")
-    mode = st.sidebar.radio("戦略", ["勢い重視（順張り）", "底値狙い（逆張り）"])
+    
+    # ヒートマップの表示切り替えスイッチ
+    map_color = st.sidebar.radio("ヒートマップの色分け", ["値動き（騰落率）", "健全性（安全スコア）"])
+    
+    mode = st.sidebar.radio("スキャン戦略", ["勢い重視（順張り）", "底値狙い（逆張り）"])
     
     st.sidebar.subheader("🏥 財務フィルター (NISA向)")
-    min_safety = st.sidebar.slider("最小安全スコア (0-100)", 0, 100, 30)
-    min_dividend = st.sidebar.slider("最小配当利回り(%)", 0.0, 7.0, 2.0)
+    min_safety = st.sidebar.slider("最小安全スコア", 0, 100, 0) # 0にしておけば制限なし
+    min_dividend = st.sidebar.slider("最小配当利回り(%)", 0.0, 7.0, 0.0)
 
     try:
         with open('tickers.txt', 'r') as f:
@@ -43,7 +47,7 @@ with tab1:
         target_stocks = []
 
     if st.button('全銘柄スキャン開始！'):
-        with st.spinner('テクニカル ＆ 財務データを同時解析中...'):
+        with st.spinner('テクニカル ＆ 財務データを解析中...'):
             all_data = []
             progress_bar = st.progress(0)
             for i, ticker in enumerate(target_stocks):
@@ -53,7 +57,7 @@ with tab1:
                     df = stock.history(period="60d")
                     if len(df) < 30: continue
 
-                    # テクニカル指標
+                    # テクニカル
                     curr_price = df['Close'].iloc[-1]
                     change_pct = ((curr_price - df['Close'].iloc[-2]) / df['Close'].iloc[-2]) * 100
                     vol_ratio = df['Volume'].iloc[-1] / df['Volume'].iloc[-6:-1].mean()
@@ -67,19 +71,17 @@ with tab1:
                     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
                     rsi = 100 - (100 / (1 + (gain / loss).iloc[-1]))
 
-                    # ファンダメンタル指標 (財務)
-                    per = info.get('trailingPE', 999)
-                    pbr = info.get('priceToBook', 9)
+                    # 財務
+                    per = info.get('trailingPE', 0)
+                    pbr = info.get('priceToBook', 0)
                     div_yield = info.get('dividendYield', 0) * 100
-                    
-                    # 自己資本比率の計算 (簡易版)
                     try:
                         balance = stock.balance_sheet
                         equity_ratio = (balance.loc['Stockholders Equity'].iloc[0] / balance.loc['Total Assets'].iloc[0]) * 100
                     except:
                         equity_ratio = 0 
 
-                    # 安全スコア計算
+                    # 安全スコア
                     safety_score = 0
                     if 0 < per < 15: safety_score += 25
                     if 0 < pbr < 1.2: safety_score += 25
@@ -98,17 +100,20 @@ with tab1:
 
             df_res = pd.DataFrame(all_data)
 
-            # ヒートマップ表示 (安全スコア可視化)
-            st.subheader("🌡️ 財務健全性ヒートマップ（濃い緑ほど安全）")
-            fig_hp = px.treemap(df_res, path=['業種', '企業名'], values=np.abs(df_res['騰落率(%)'])+1,
-                               color='安全スコア', color_continuous_scale='Greens', hover_data=['価格', '安全スコア'])
+            # --- 切り替え式ヒートマップ ---
+            if map_color == "値動き（騰落率）":
+                st.subheader("🌡️ 市場ヒートマップ（赤：上昇 / 緑：下落）")
+                fig_hp = px.treemap(df_res, path=['業種', '企業名'], values=np.abs(df_res['騰落率(%)'])+1,
+                                   color='騰落率(%)', color_continuous_scale='RdYlGn_r', hover_data=['価格', '騰落率(%)'])
+            else:
+                st.subheader("🏥 財務健全性ヒートマップ（濃い緑ほど安全）")
+                fig_hp = px.treemap(df_res, path=['業種', '企業名'], values=np.abs(df_res['騰落率(%)'])+1,
+                                   color='安全スコア', color_continuous_scale='Greens', hover_data=['価格', '安全スコア'])
             st.plotly_chart(fig_hp, use_container_width=True)
 
-            # フィルタリング
+            # --- フィルタリング ---
             if mode == "勢い重視（順張り）":
-                f_change = (df_res['騰落率(%)'] >= 3.0) # デフォルトフィルタ
-                f_vol = (df_res['出来高(倍)'] >= 1.5)
-                results = df_res[f_change & f_vol & (df_res['安全スコア'] >= min_safety) & (df_res['配当(%)'] >= min_dividend)]
+                results = df_res[(df_res['騰落率(%)'] >= 3.0) & (df_res['出来高(倍)'] >= 1.5) & (df_res['安全スコア'] >= min_safety) & (df_res['配当(%)'] >= min_dividend)]
             else:
                 results = df_res[(df_res['RSI'] <= 30) & (df_res['安全スコア'] >= min_safety) & (df_res['配当(%)'] >= min_dividend)]
 
@@ -118,16 +123,16 @@ with tab1:
                 for s in sectors:
                     s_df = results[results['業種'] == s]
                     with st.expander(f"📁 {s} ({len(s_df)}銘柄)"):
-                        st.dataframe(s_df.drop(columns=["概要", "ニュース", "業種"]).sort_values(by="安全スコア", ascending=False))
+                        st.dataframe(s_df.drop(columns=["概要", "ニュース", "業種"]).sort_values(by="騰落率(%)", ascending=False))
                         for _, row in s_df.iterrows():
                             st.write(f"--- **{row['企業名']} ({row['コード']})** ---")
                             c1, c2 = st.columns(2)
-                            with c1: st.write(f"**財務詳細:** PER:{row['PER']} / PBR:{row['PBR']} / 自己資本:{row['自己資本比率(%)']}%")
+                            with c1: st.write(f"**財務:** PER:{round(row['PER'],1)} / PBR:{round(row['PBR'],2)} / 安全スコア:{row['安全スコア']}点")
                             with c2: st.info(analyze_sentiment_free(row['ニュース']))
             else:
                 st.warning("条件に合う銘柄は見つかりませんでした。")
 
-# --- 5. タブ2: バックテスト ---
+# --- 5. タブ2 & 3 (省略せず以前のバックテスト・ポートフォリオを維持) ---
 with tab2:
     st.title("📊 バックテスト（過去検証）")
     sel_ticker = st.text_input("検証したい銘柄", value="6758.T")
@@ -146,10 +151,9 @@ with tab2:
             fig_bt.add_trace(go.Scatter(x=sigs.index, y=sigs['Low']*0.97, mode='markers', marker=dict(symbol='star', size=12, color='gold')))
             st.plotly_chart(fig_bt, use_container_width=True)
 
-# --- 6. タブ3: ポートフォリオ ---
 with tab3:
     st.title("💰 ポートフォリオ管理")
-    pt_input = st.text_area("入力形式: コード,単価,株数", "7203.T,2500,100")
+    pt_input = st.text_area("入力: コード,単価,株数", "7203.T,2500,100")
     if st.button('更新'):
         pf_data = []
         for line in pt_input.split('\n'):
